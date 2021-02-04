@@ -1120,3 +1120,1126 @@ Household expenditure on consumption categories by deciles",
 grafica_2012
 
 rm(list = ls())
+
+###################   2014 #####################
+
+#ENIGH 2014
+library(foreign)
+library(survey)
+library(doBy)
+library(reldist)
+library(tidyverse)
+options(survey.lonely.psu="adjust")
+
+#reading the data
+setwd("C:/Users/Erick/OneDrive/GIC/GITHUB2018/GIC/ENIGH_2014/ENIGH_2014")
+Conc<-read.dbf("NCV_concentrado_2014_concil_2010.dbf",as.is = T)
+
+Conc<-Conc%>%
+  select(FOLIOVIV,FOLIOHOG,TOT_INTEG,FACTOR_HOG,UPM,EST_DIS,TAM_LOC,GASTO_MON,ALIMENTOS,
+         VESTI_CALZ,VIVIENDA,LIMPIEZA,SALUD,TRANSPORTE,EDUCA_ESPA,PERSONALES,TRANSF_GAS)
+
+Conc<-Conc%>%
+  mutate(prueba=ALIMENTOS+VESTI_CALZ+VIVIENDA+SALUD+TRANSPORTE+EDUCA_ESPA+PERSONALES+TRANSF_GAS+LIMPIEZA)
+
+all.equal(Conc$GASTO_MON,Conc$prueba)
+
+Conc<-Conc%>%
+  mutate(Small=ifelse(TAM_LOC==4,1,0))
+
+
+Conc<-Conc%>%
+  mutate(entidad=substr(FOLIOVIV,1,2))
+
+Conc$entidad<-as.numeric(Conc$entidad)
+
+summary(Conc$entidad)
+
+
+############vamos a deflactar 
+entidad<-c("1","2","3","4","5","6","7","8","9",
+           "10","11","12","13","14","15","16","17","18","19","20",
+           "21","22","23","24","25","26","27","28","29","30","31","32")
+
+Deflactores<-c(84.83719412,84.71298718,87.72006813,84.75531573,85.43492356,85.95619951,
+               85.74834254,86.56666232,84.16188055,83.70225032,83.9615435,84.53604359,
+               83.18465148,84.25713418,84.13942245,84.67954245,85.63536404,85.10590689,
+               86.91863644,85.7274313,84.81630044,82.88561602,88.11267851, 85.38266795,
+               87.85149331,87.86376081,87.01704038,86.67656519,85.116625,85.82591013,85.44560622,
+               84.95763044)
+
+entidades<-c("Aguascalientes","Baja California","Baja California Sur","Campeche","Coahuila de Zaragoza",
+             "Colima","Chiapas","Chihuahua","Ciudad de Mexico","Durango","Guanajuato","Guerrero","Hidalgo",
+             "Jalisco","Mexico","Michoaca¡n de Ocampo","Morelos","Nayarit","Nuevo Leon","Oaxaca","Puebla",
+             "Queretaro","Quintana Roo","San Luis Potosi","Sinaloa","Sonora","Tabasco","Tamaulipas","Tlaxcala","Veracruz de Ignacio de la Llave","YucatÃÂ¡n","Zacatecas")
+
+Deflactor_2014<-data.frame(entidad,entidades,Deflactores)
+
+Conc<-merge(Conc,Deflactor_2014,by=c("entidad"))
+
+Conc <- Conc%>%
+  mutate(GASTO_MON=(GASTO_MON/Deflactores)*100,ALIMENTOS=(ALIMENTOS/Deflactores)*100,VESTI_CALZ=(VESTI_CALZ/Deflactores)*100,
+         VIVIENDA=(VIVIENDA/Deflactores)*100,SALUD=(SALUD/Deflactores)*100,TRANSPORTE=(TRANSPORTE/Deflactores)*100,
+         EDUCA_ESPA=(EDUCA_ESPA/Deflactores)*100,PERSONALES=(PERSONALES/Deflactores)*100,TRANSF_GAS=(TRANSF_GAS/Deflactores)*100,
+         LIMPIEZA=(LIMPIEZA/Deflactores)*100)
+
+Conc<-Conc%>%
+  mutate(GASTO_MON=(GASTO_MON/TOT_INTEG),ALIMENTOS=(ALIMENTOS/TOT_INTEG),VESTI_CALZ=(VESTI_CALZ/TOT_INTEG),
+         VIVIENDA=(VIVIENDA/TOT_INTEG),SALUD=(SALUD/TOT_INTEG),TRANSPORTE=(TRANSPORTE/TOT_INTEG),
+         EDUCA_ESPA=(EDUCA_ESPA/TOT_INTEG),PERSONALES=(PERSONALES/TOT_INTEG),TRANSF_GAS=(TRANSF_GAS/TOT_INTEG),
+         LIMPIEZA=(LIMPIEZA/TOT_INTEG))
+
+
+#apparently this is a "flag", IDK what is this shit yet
+Conc$Nhog <- 1
+
+########################################## DECILES 
+
+#Attaching the data frame
+attach(Conc) #this is for not writing the name of the data frame and the $ ever time
+
+#Sort Conc according to GASTO_MON, FOLIOVIV, FOLIOHOG
+Conc<- orderBy (~+GASTO_MON+FOLIOVIV+FOLIOHOG, data=Conc) #this give us the households sorted by total income
+
+#Adding the values of the expansion FACTOR_HOG. The sum is 34 million, which is the number of households in the country.
+tot_hogares<-sum(Conc$FACTOR_HOG,to.data.frame=TRUE)
+
+#Dividing the number of households into 10 without decimals
+tam_dec<-trunc(tot_hogares/10) #the result is 3.5 million housholds per decile
+
+#Adding a variable to the data frame with this value
+Conc$tam_dec<-tam_dec
+
+############################# Creating Deciles of Income 
+
+Conc$MAXT<-Conc$GASTO_MON #vamos a crear en esta base la variable MAXT que es una copia de la columna de ingresos
+
+Conc<-Conc[with(Conc, order(rank(MAXT))),]  #lo que hicimos aqu? fue reordenar la base con respecto a MAXT. Cosa que en realidad, ya estaba.
+
+Conc$ACUMULA<-cumsum(Conc$FACTOR_HOG) #aqu? creamos una variable de suma acumulada del FACTOR_HOG de VIVIENDAs.
+
+
+
+############################Ahora viene la creaci?n de los deciles
+
+#no se que es esto de a1 y b1. Pero s? e simportante. Los resultados cmabian por poquito si no lo haces 
+for(i in 1:9)
+{
+  a1<-Conc[dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1,]$FACTOR_HOG
+  Conc<-rbind(Conc[1:(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1),],
+              Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1):dim(Conc[1])[1],])
+  b1<-tam_dec*i-Conc[dim(Conc[Conc$ACUMULA<tam_dec*i,])[1],]$ACUMULA
+  Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1),]$FACTOR_HOG<-b1
+  Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+2),]$FACTOR_HOG<-(a1-b1)
+}
+
+#aqu? estamos creando otra variable de suma acumulada del n?mero de hogares
+Conc$ACUMULA2<-cumsum(Conc$FACTOR_HOG)
+
+#aqu? estamos creando una variable que se llama decil que solo tiene ceros
+Conc$DECIL<-0
+
+#recordemos que el tama?o de cada decil es de 3,474,481. 
+#loq ue hicimos aqu? es pedirle que ponga un uno a los primeros hogares menores al tama?o de decil. 
+#es decir, que el primer decil tiene ya UNOS
+Conc[(Conc$ACUMULA2<=tam_dec),]$DECIL<-1
+
+#para una sucesi?n del 1 al 9, cuando la variable acumulado2 sea mayor que el tama?o de decil multiplicado por
+#1, 2, 3... pone en la variable decil el n?mero i+1
+for(i in 1:9)
+{
+  Conc[((Conc$ACUMULA2>tam_dec*i)&(Conc$ACUMULA2<=tam_dec*(i+1))),]$DECIL<-(i+1)
+}
+
+# a lo que le qued? cero (que es la ?ltima observaci?n), ponle el decil 10
+Conc[Conc$DECIL%in%"0",]$DECIL<-10
+
+# TOTAL HOGARES
+x<-tapply(Conc$FACTOR_HOG,Conc$Nhog,sum)
+# DECILES
+y<-tapply(Conc$FACTOR_HOG,Conc$DECIL,sum)
+# se calcula el promedio (ingreso entre los hogares) tanto para el total como para cada uno de los deciles
+GASTO_MONmed_t<-tapply(Conc$FACTOR_HOG*Conc$GASTO_MON,Conc$Nhog,sum)/x
+GASTO_MONmed_d<-tapply(Conc$FACTOR_HOG*Conc$GASTO_MON,Conc$DECIL,sum)/y
+########################## C U A D R O S 
+# guardamos los resultados en un data frame
+prom_rub <- data.frame (c(GASTO_MONmed_t,GASTO_MONmed_d))
+# agregamos el nombre a las filas
+Numdec<-c("Mean", "I", "II", "III","IV", "V", "VI", "VII", "VIII", "IX","X")
+row.names(prom_rub)<-Numdec
+
+# GINI Nacional (sobre los 10 deciles) por hogar usando el promedio del ingreso corriente (GASTO_MON)
+deciles_hog_GASTO_MON <- data.frame(hogaresxdecil=c(x,x,x,x,x,x,x,x,x,x),
+                                    ingreso=c(GASTO_MONmed_d[1],GASTO_MONmed_d[2],GASTO_MONmed_d[3],
+                                              GASTO_MONmed_d[4],GASTO_MONmed_d[5],GASTO_MONmed_d[6],
+                                              GASTO_MONmed_d[7],GASTO_MONmed_d[8],GASTO_MONmed_d[9],
+                                              GASTO_MONmed_d[10]))
+# se efectua la función Gini y se guarda en nuestro vector a.
+a<-gini(deciles_hog_GASTO_MON$ingreso,weights=deciles_hog_GASTO_MON$hogares)
+# se renombran las variables (columnas)
+names(prom_rub)=c("GASTO CORRIENTE")
+names(a)="GINI"
+##### Mostramos el resultado en pantalla 
+round(prom_rub)
+round(a,5)
+
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+
+write.dbf(Conc,file="Conc2014_consumo.dbf")
+
+rm(list=ls())
+
+################## Creadicón de las tablas de ingreso por fuente 
+library(foreign)
+library(survey)
+library(doBy)
+library(reldist)
+library(tidyverse)
+options(survey.lonely.psu="adjust")
+
+#reading the data
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+Conc2014<-read.dbf("Conc2014_consumo.dbf",as.is = T)
+
+
+
+mydesign <- svydesign(id=~UPM,strata=~EST_DIS,data=Conc2014,weights=~FACTOR_HOG)
+
+#vamos por el ingreso corriente total del pa?s
+# ing_ cor se define como La suma de las variables ingtrab, SALUD, TRANSF_GASr, estim_alqu y otros_ing.
+#te sale que el ingreso trimestra promedio en Mexico es de 49,610.
+#notes? que esto no es otra cosa que el GASTO_MON*FACTOR_HOG/34744819
+GASTO_MONTot <- svyratio(~GASTO_MON,denominator=~Nhog,mydesign) 
+
+#ahora, vamos a hacer lo mismo por decil
+#aqu? cmabia la funci?n a svyby, en by va el decil que creamos.
+#y al final va la funci?n que queremos
+GASTO_MONDECIL <- svyby(~GASTO_MON,denominator=~Nhog,by=~DECIL,mydesign,svyratio)
+
+
+#     ALIMENTOS
+
+ALIMENTOSTot <- svyratio(~ALIMENTOS,denominator=~Nhog,mydesign) # Total promedio
+ALIMENTOSDECIL <- svyby(~ALIMENTOS,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### vestido
+vestidoTot <- svyratio(~VESTI_CALZ,denominator=~Nhog,mydesign) # Total promedio
+vestidoDECIL <- svyby(~VESTI_CALZ,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### VIVIENDA
+VIVIENDATot <- svyratio(~VIVIENDA,denominator=~Nhog,mydesign) # Total promedio
+VIVIENDADECIL <- svyby(~VIVIENDA,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### LIMPIEZA
+LIMPIEZATot <- svyratio(~LIMPIEZA,denominator=~Nhog,mydesign) # Total promedio
+LIMPIEZADECIL<- svyby(~LIMPIEZA,denominator=~Nhog,by=~DECIL,mydesign,svyratio) # por decil
+
+
+###### SALUD
+SALUDTot <- svyratio(~SALUD,denominator=~Nhog,mydesign) # Total promedio
+SALUDDECIL <- svyby(~SALUD,denominator=~Nhog,by=~DECIL ,mydesign,svyratio)#Por decil
+
+
+###### TRANSPORTE
+TRANSPORTETot <- svyratio(~TRANSPORTE,denominator=~Nhog,mydesign) # Total promedio
+TRANSPORTEDECIL <- svyby(~TRANSPORTE,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### EDUCA_ESPA
+EDUCA_ESPATot <- svyratio(~EDUCA_ESPA,denominator=~Nhog,mydesign) # Total promedio
+EDUCA_ESPADECIL <- svyby(~EDUCA_ESPA,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # Por decil
+
+
+######## PERSONALES
+
+PERSONALESTot <- svyratio(~PERSONALES,denominator=~Nhog,mydesign) # Total promedio
+PERSONALESDECIL <- svyby(~PERSONALES,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # DECIL
+
+###### TRANSF_GAS 
+TRANSF_GASTot <- svyratio(~TRANSF_GAS,denominator=~Nhog,mydesign) # Total promedio
+TRANSF_GASDECIL <- svyby(~TRANSF_GAS,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # decil
+
+
+######################################### Estimaciones 
+
+ES_GASTO_MONTot <- GASTO_MONTot[[1]] #lo que estoy haciendo aqu? es extraer el valor de la primera columa que corresponde al c?lculo.
+ES_GASTO_MONDECIL <- GASTO_MONDECIL[[2]] #En el caso de las entidades, los c?lculos quedaron en la segunda columna
+
+ES_ALIMENTOSTot <- ALIMENTOSTot[[1]]
+ES_ALIMENTOSDECIL <- ALIMENTOSDECIL[[2]]
+
+ES_vestidoTot <- vestidoTot[[1]]
+ES_vestidoDECIL <- vestidoDECIL[[2]]
+
+ES_VIVIENDATot <- VIVIENDATot[[1]]
+ES_VIVIENDADECIL <- VIVIENDADECIL[[2]]
+
+ES_LIMPIEZATot <- LIMPIEZATot [[1]]
+ES_LIMPIEZADECIL <- LIMPIEZADECIL [[2]]
+
+ES_SALUDTot <- SALUDTot [[1]]
+ES_SALUDDECIL <- SALUDDECIL [[2]]
+
+ES_TRANSPORTETot <- TRANSPORTETot [[1]]
+ES_TRANSPORTEDECIL <- TRANSPORTEDECIL [[2]]
+
+ES_EDUCA_ESPATot <- EDUCA_ESPATot [[1]]
+ES_EDUCA_ESPADECIL <- EDUCA_ESPADECIL [[2]]
+
+ES_PERSONALESTot <- PERSONALESTot[[1]]
+ES_PERSONALESDECIL <- PERSONALESDECIL[[2]]
+
+ES_TRANSF_GASTot <- TRANSF_GASTot [[1]]
+ES_TRANSF_GASDECIL <- TRANSF_GASDECIL [[2]]
+
+
+########## Error Est?ndar 
+SE_GASTO_MONTot <- SE (GASTO_MONTot)
+SE_GASTO_MONDECIL <- SE (GASTO_MONDECIL)
+
+SE_ALIMENTOSTot <- SE (ALIMENTOSTot)
+SE_ALIMENTOSDECIL <- SE (ALIMENTOSDECIL)
+
+SE_vestidoTot <- SE (vestidoTot)
+SE_vestidoDECIL <- SE (vestidoDECIL)
+
+SE_VIVIENDATot <- SE (VIVIENDATot)
+SE_VIVIENDADECIL <- SE (VIVIENDADECIL)
+
+SE_LIMPIEZATot <- SE (LIMPIEZATot)
+SE_LIMPIEZADECIL <- SE (LIMPIEZADECIL)
+
+SE_SALUDTot <- SE (SALUDTot)
+SE_SALUDDECIL <- SE (SALUDDECIL)
+
+SE_TRANSPORTETot <- SE (TRANSPORTETot)
+SE_TRANSPORTEDECIL <- SE (TRANSPORTEDECIL)
+
+SE_EDUCA_ESPATot <- SE (EDUCA_ESPATot)
+SE_EDUCA_ESPADECIL <- SE (EDUCA_ESPADECIL)
+
+SE_PERSONALESTot <- SE (PERSONALESTot)
+SE_PERSONALESDECIL <- SE (PERSONALESDECIL)
+
+SE_TRANSF_GASTot <- SE (TRANSF_GASTot)
+SE_TRANSF_GASDECIL <- SE (TRANSF_GASDECIL)
+
+
+########## Coeficiente de variaci?n 
+CV_GASTO_MONTot <- cv(GASTO_MONTot)
+CV_GASTO_MONDECIL <- cv(GASTO_MONDECIL)
+
+CV_ALIMENTOSTot <- cv(ALIMENTOSTot)
+CV_ALIMENTOSDECIL <- cv(ALIMENTOSDECIL)
+
+CV_vestidoTot <- cv(vestidoTot)
+CV_vestidoDECIL <- cv(vestidoDECIL)
+
+CV_VIVIENDATot <- cv(VIVIENDATot)
+CV_VIVIENDADECIL <- cv(VIVIENDADECIL)
+
+CV_LIMPIEZATot <- cv(LIMPIEZATot)
+CV_LIMPIEZADECIL <- cv(LIMPIEZADECIL)
+
+CV_SALUDTot <- cv(SALUDTot)
+CV_SALUDDECIL <- cv(SALUDDECIL)
+
+CV_TRANSPORTETot <- cv(TRANSPORTETot)
+CV_TRANSPORTEDECIL <- cv(TRANSPORTEDECIL)
+
+CV_EDUCA_ESPATot <- cv(EDUCA_ESPATot)
+CV_EDUCA_ESPADECIL <- cv(EDUCA_ESPADECIL)
+
+CV_PERSONALESTot <- cv(PERSONALESTot)
+CV_PERSONALESDECIL <- cv(PERSONALESDECIL)
+
+CV_TRANSF_GASTot <- cv(TRANSF_GASTot)
+CV_TRANSF_GASDECIL <- cv(TRANSF_GASDECIL)
+
+
+########## Limite inferior 
+LI_GASTO_MONTot <- confint(GASTO_MONTot,level=0.90)[,1]
+LI_GASTO_MONDECIL <- confint(GASTO_MONDECIL,level=0.90)[,1]
+
+LI_ALIMENTOSTot <- confint(ALIMENTOSTot,level=0.90)[,1]
+LI_ALIMENTOSDECIL <- confint(ALIMENTOSDECIL,level=0.90)[,1]
+
+LI_vestidoTot <- confint(vestidoTot,level=0.90)[,1]
+LI_vestidoDECIL <- confint(vestidoDECIL,level=0.90)[,1]
+
+LI_VIVIENDATot <- confint(VIVIENDATot,level=0.90)[,1]
+LI_VIVIENDADECIL <- confint(VIVIENDADECIL,level=0.90)[,1]
+
+LI_LIMPIEZATot <- confint(LIMPIEZATot,level=0.90)[,1]
+LI_LIMPIEZADECIL <- confint(LIMPIEZADECIL,level=0.90)[,1]
+
+LI_SALUDTot <- confint(SALUDTot,level=0.90)[,1]
+LI_SALUDDECIL <- confint(SALUDDECIL,level=0.90)[,1]
+
+LI_TRANSPORTETot <- confint(TRANSPORTETot,level=0.90)[,1]
+LI_TRANSPORTEDECIL <- confint(TRANSPORTEDECIL,level=0.90)[,1]
+
+LI_EDUCA_ESPATot <- confint(EDUCA_ESPATot,level=0.90)[,1]
+LI_EDUCA_ESPADECIL <- confint(EDUCA_ESPADECIL,level=0.90)[,1]
+
+LI_PERSONALESTot <- confint(PERSONALESTot,level=0.90)[,1]
+LI_PERSONALESDECIL <- confint(PERSONALESDECIL,level=0.90)[,1]
+
+LI_TRANSF_GASTot <- confint(TRANSF_GASTot,level=0.90)[,1]
+LI_TRANSF_GASDECIL <- confint(TRANSF_GASDECIL,level=0.90)[,1]
+
+
+
+########## Limite superior 
+LS_GASTO_MONTot <- confint(GASTO_MONTot,level=0.90)[,2]
+LS_GASTO_MONDECIL <- confint(GASTO_MONDECIL,level=0.90)[,2]
+
+LS_ALIMENTOSTot <- confint(ALIMENTOSTot,level=0.90)[,2]
+LS_ALIMENTOSDECIL <- confint(ALIMENTOSDECIL,level=0.90)[,2]
+
+LS_vestidoTot <- confint(vestidoTot,level=0.90)[,2]
+LS_vestidoDECIL <- confint(vestidoDECIL,level=0.90)[,2]
+
+LS_VIVIENDATot <- confint(VIVIENDATot,level=0.90)[,2]
+LS_VIVIENDADECIL <- confint(VIVIENDADECIL,level=0.90)[,2]
+
+LS_LIMPIEZATot <- confint(LIMPIEZATot,level=0.90)[,2]
+LS_LIMPIEZADECIL <- confint(LIMPIEZADECIL,level=0.90)[,2]
+
+LS_SALUDTot <- confint(SALUDTot,level=0.90)[,2]
+LS_SALUDDECIL <- confint(SALUDDECIL,level=0.90)[,2]
+
+LS_TRANSPORTETot <- confint(TRANSPORTETot,level=0.90)[,2]
+LS_TRANSPORTEDECIL <- confint(TRANSPORTEDECIL,level=0.90)[,2]
+
+LS_EDUCA_ESPATot <- confint(EDUCA_ESPATot,level=0.90)[,2]
+LS_EDUCA_ESPADECIL <- confint(EDUCA_ESPADECIL,level=0.90)[,2]
+
+LS_PERSONALESTot <- confint(PERSONALESTot,level=0.90)[,2]
+LS_PERSONALESDECIL <- confint(PERSONALESDECIL,level=0.90)[,2]
+
+LS_TRANSF_GASTot <- confint(TRANSF_GASTot,level=0.90)[,2]
+LS_TRANSF_GASDECIL <- confint(TRANSF_GASDECIL,level=0.90)[,2]
+
+
+#############################      Cuadros   
+#este cuadro, lo ?nico que tiene son todas la estimaciones.
+#son 10 filas y 18 columnas.
+c_DECIL_ES <-
+  data.frame(c(ES_GASTO_MONTot,ES_GASTO_MONDECIL),
+             c(ES_ALIMENTOSTot,ES_ALIMENTOSDECIL),
+             c(ES_vestidoTot,ES_vestidoDECIL),
+             c(ES_VIVIENDATot,ES_VIVIENDADECIL),
+             c(ES_LIMPIEZATot,ES_LIMPIEZADECIL),
+             c(ES_SALUDTot,ES_SALUDDECIL),
+             c(ES_TRANSPORTETot,ES_TRANSPORTEDECIL),
+             c(ES_EDUCA_ESPATot,ES_EDUCA_ESPADECIL),
+             c(ES_PERSONALESTot,ES_PERSONALESDECIL),
+             c(ES_TRANSF_GASTot,ES_TRANSF_GASDECIL))
+##### ERROR ESTANDAR
+c_DECIL_SE <-
+  data.frame(c(SE_GASTO_MONTot,SE_GASTO_MONDECIL),
+             c(SE_ALIMENTOSTot,SE_ALIMENTOSDECIL),
+             c(SE_vestidoTot,SE_vestidoDECIL),
+             c(SE_VIVIENDATot,SE_VIVIENDADECIL),
+             c(SE_LIMPIEZATot,SE_LIMPIEZADECIL),
+             c(SE_SALUDTot,SE_SALUDDECIL),
+             c(SE_TRANSPORTETot,SE_TRANSPORTEDECIL),
+             c(SE_EDUCA_ESPATot,SE_EDUCA_ESPADECIL),
+             c(SE_PERSONALESTot,SE_PERSONALESDECIL),
+             c(SE_TRANSF_GASTot,SE_TRANSF_GASDECIL))
+
+##### COEFICIENTE DE VARIACION
+c_DECIL_CV <-
+  data.frame(c(CV_GASTO_MONTot,CV_GASTO_MONDECIL),c(CV_ALIMENTOSTot,CV_ALIMENTOSDECIL),c(CV_vestidoTot,CV_vestidoDECIL),c(CV_VIVIENDATot,CV_VIVIENDADECIL)
+             ,c(CV_LIMPIEZATot,CV_LIMPIEZADECIL),c(CV_SALUDTot,CV_SALUDDECIL),c(CV_TRANSPORTETot,CV_TRANSPORTEDECIL),
+             c(CV_EDUCA_ESPATot,CV_EDUCA_ESPADECIL),c(CV_PERSONALESTot,CV_PERSONALESDECIL),c(CV_TRANSF_GASTot,CV_TRANSF_GASDECIL))
+
+##### LIMITE INFERIOR AL 90%
+c_DECIL_LI <-
+  data.frame(c(LI_GASTO_MONTot,LI_GASTO_MONDECIL),c(LI_ALIMENTOSTot,LI_ALIMENTOSDECIL),c(LI_vestidoTot,LI_vestidoDECIL),
+             c(LI_VIVIENDATot,LI_VIVIENDADECIL),c(LI_LIMPIEZATot,LI_LIMPIEZADECIL),c(LI_SALUDTot,LI_SALUDDECIL),c(LI_TRANSPORTETot,LI_TRANSPORTEDECIL),c(LI_EDUCA_ESPATot,LI_EDUCA_ESPADECIL)
+             ,c(LI_PERSONALESTot,LI_PERSONALESDECIL),c(LI_TRANSF_GASTot,LI_TRANSF_GASDECIL))
+
+### LIMITE SUPERIOR AL 90%
+c_DECIL_LS <-
+  data.frame(c(LS_GASTO_MONTot,LS_GASTO_MONDECIL),c(LS_ALIMENTOSTot,LS_ALIMENTOSDECIL),c(LS_vestidoTot,LS_vestidoDECIL),c(LS_VIVIENDATot,LS_VIVIENDADECIL)
+             ,c(LS_LIMPIEZATot,LS_LIMPIEZADECIL),c(LS_SALUDTot,LS_SALUDDECIL),c(LS_TRANSPORTETot,LS_TRANSPORTEDECIL),
+             c(LS_EDUCA_ESPATot,LS_EDUCA_ESPADECIL),c(LS_PERSONALESTot,LS_PERSONALESDECIL),c(LS_TRANSF_GASTot,LS_TRANSF_GASDECIL))
+
+# se agregan los nombres de las entidades a las filas
+#esta cadena est? bien loca, no?
+DECILES<-c("MEAN", "I", "II", "III","IV", "V", "VI", "VII", "VIII", "IX","X")
+row.names(c_DECIL_ES)<-row.names(c_DECIL_SE)<-row.names(c_DECIL_CV)<-row.names(c_DECIL_LI)<-row.names(c_DECIL_LS)<-DECILES
+
+#ahora vamos a ponerle nombre a las columnas
+names(c_DECIL_ES)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "PERSONALES spending","TRANSF_GASrences")
+
+names(c_DECIL_SE)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "PERSONALES spending","TRANSF_GASrences")
+
+names(c_DECIL_CV)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "PERSONALES spending","TRANSF_GASrences")
+
+names(c_DECIL_LI)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "PERSONALES spending","TRANSF_GASrences")
+
+names(c_DECIL_LS)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "PERSONALES spending","TRANSF_GASrences")
+
+#ahora, lo que podemos hacer es mostrar los cuadros en la consola redondeados
+# el comando round, redondea las cifra para mostrar, en el caso del coeficiente de variaci?n redondea a 4 decimales y luego multiplica por cien.
+# Mostramos el resultado en pantalla
+round(c_DECIL_ES)
+round(c_DECIL_SE)
+round(c_DECIL_CV,4)*100
+round(c_DECIL_LI)
+round(c_DECIL_LS)
+
+prueba<-c_DECIL_ES%>%
+  mutate(prueba=Food+Clothes+Housing+
+           Cleaning+`Health care`+Transportation+
+           Education+`PERSONALES spending`+TRANSF_GASrences)
+
+
+all.equal(c_DECIL_ES$gasto,prueba$prueba)
+
+
+
+write.dbf(c_DECIL_ES,file = "CONSUMO Nacional por fuente por DECIL estimaciones 2014.dbf")
+write.dbf(c_DECIL_SE,file = "CONSUMO Nacional por fuente por DECIL errores standard 2014.dbf")
+write.dbf(c_DECIL_CV,file = "CONSUMO Nacional por fuente por DECIL CV 2014.dbf")
+write.dbf(c_DECIL_LI,file = "CONSUMO Nacional por fuente por DECIL LI 2014.dbf")
+write.dbf(c_DECIL_ES,file = "CONSUMO Nacional por fuente por DECIL LS 2014.dbf")
+
+rm(list = ls())
+
+########### Grafica
+library(foreign)
+library(tidyverse)
+library(plotly)
+library(htmlwidgets)
+library(reshape2)
+
+
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+Consumo_por_decil_2014<-read.dbf("CONSUMO Nacional por fuente por DECIL estimaciones 2014.dbf",as.is = T)
+
+base_grafica<-Consumo_por_decil_2014%>%
+  mutate(Food=(Food/gasto)*100,
+         Clothes=(Clothes/gasto)*100,
+         Housing=(Housing/gasto)*100,
+         Health.car=(Health.car/gasto)*100,
+         Transporta=(Transporta/gasto)*100,
+         Education=(Education/gasto)*100,
+         Others=((PERSONALES+TRANSF_GAS+Cleaning)/gasto)*100)
+
+
+base_grafica$gasto<-NULL
+
+base_grafica$PERSONALES<-NULL
+
+base_grafica$TRANSF_GAS<-NULL
+
+base_grafica$Cleaning<-NULL
+
+prueba<-base_grafica%>%
+  mutate(Food+Clothes+Housing+Health.car+Transporta+Education+Others)
+
+prueba$`+...`
+
+col_order<-c("Others","Education","Transporta","Health.car","Housing","Food")
+
+base_grafica<-base_grafica[,col_order]
+
+base_grafica<-base_grafica%>%
+  rename(Others=Others,
+         Education=Education,
+         Transport=Transporta,
+         "Health care"=Health.car,
+         Housing=Housing,
+         Food=Food)
+
+
+base_grafica<-base_grafica%>%
+  mutate(Deciles=c("Mean","I","II","III","IV","V","VI","VII","VIII","IX","X"))
+
+base_grafica<-base_grafica%>%
+  mutate(Deciles=fct_relevel(Deciles,"Mean","I","II","III","IV","V","VI","VII","VIII","IX","X"))
+
+base_grafica<-melt(base_grafica)
+
+grafica_2014<-ggplot(base_grafica, aes(fill=variable, y=value, x=Deciles)) + 
+  geom_bar(position="stack", stat="identity")+
+  labs(title = "Figure 1
+Mexico 2014
+Household expenditure on consumption categories by deciles",
+       y="Share of expenditure",
+       x="Decile",
+       fill="")+
+  scale_y_continuous(breaks = seq(0,100,10))+
+  theme_minimal()
+
+grafica_2014
+
+rm(list = ls())
+
+###################   2016 #####################
+
+#ENIGH 2016
+library(foreign)
+library(survey)
+library(doBy)
+library(reldist)
+library(tidyverse)
+options(survey.lonely.psu="adjust")
+
+#reading the data
+setwd("C:/Users/Erick/OneDrive/GIC/GITHUB2018/GIC/ENIGH_2016/ENIGH_2016")
+Conc<-read.dbf("concentradohogar.dbf",as.is = T)
+
+
+Conc<-Conc%>%
+  select(folioviv,foliohog,tot_integ,factor,upm,est_dis,tam_loc,gasto_mon,alimentos,
+         vesti_calz,vivienda,limpieza,salud,transporte,educa_espa,personales,transf_gas)
+
+Conc<-Conc%>%
+  mutate(prueba=alimentos+vesti_calz+vivienda+salud+transporte+educa_espa+personales+transf_gas+limpieza)
+
+all.equal(Conc$gasto_mon,Conc$prueba)
+
+Conc<-Conc%>%
+  mutate(Small=ifelse(tam_loc==4,1,0))
+
+
+Conc<-Conc%>%
+  mutate(entidad=substr(folioviv,1,2))
+
+Conc$entidad<-as.numeric(Conc$entidad)
+
+summary(Conc$entidad)
+
+
+############vamos a deflactar 
+entidad<-c("1","2","3","4","5","6","7","8","9",
+           "10","11","12","13","14","15","16","17","18","19","20",
+           "21","22","23","24","25","26","27","28","29","30","31","32")
+
+Deflactores<-c(88.93433233,89.28040096,91.95087499,89.76710561,89.19399709,90.23536872,90.78396266,90.0546628,
+               89.37739815,88.84504518,88.86106386,89.85852094,88.69551883,89.94201886,89.0321435,89.36724855,
+               89.95082241,89.94509331,91.05351504,90.88502497,90.23145185,88.42279602,92.46125044,89.71331622,
+               92.12110824,91.61090466,91.34542792,89.82280249,89.94760905,90.57636359,89.36627616,89.12282265)
+
+entidades<-c("Aguascalientes","Baja California","Baja California Sur","Campeche","Coahuila de Zaragoza",
+             "Colima","Chiapas","Chihuahua","Ciudad de Mexico","Durango","Guanajuato","Guerrero","Hidalgo",
+             "Jalisco","Mexico","Michoaca¡n de Ocampo","Morelos","Nayarit","Nuevo Leon","Oaxaca","Puebla",
+             "Queretaro","Quintana Roo","San Luis Potosi","Sinaloa","Sonora","Tabasco","Tamaulipas","Tlaxcala","Veracruz de Ignacio de la Llave","YucatÃÂ¡n","Zacatecas")
+
+Deflactor_2016<-data.frame(entidad,entidades,Deflactores)
+
+Conc<-merge(Conc,Deflactor_2016,by=c("entidad"))
+
+Conc <- Conc%>%
+  mutate(gasto_mon=(gasto_mon/Deflactores)*100,alimentos=(alimentos/Deflactores)*100,vesti_calz=(vesti_calz/Deflactores)*100,
+         vivienda=(vivienda/Deflactores)*100,salud=(salud/Deflactores)*100,transporte=(transporte/Deflactores)*100,
+         educa_espa=(educa_espa/Deflactores)*100,personales=(personales/Deflactores)*100,transf_gas=(transf_gas/Deflactores)*100,
+         limpieza=(limpieza/Deflactores)*100)
+
+Conc<-Conc%>%
+  mutate(gasto_mon=(gasto_mon/tot_integ),alimentos=(alimentos/tot_integ),vesti_calz=(vesti_calz/tot_integ),
+         vivienda=(vivienda/tot_integ),salud=(salud/tot_integ),transporte=(transporte/tot_integ),
+         educa_espa=(educa_espa/tot_integ),personales=(personales/tot_integ),transf_gas=(transf_gas/tot_integ),
+         limpieza=(limpieza/tot_integ))
+
+
+#apparently this is a "flag", IDK what is this shit yet
+Conc$Nhog <- 1
+
+########################################## DECILES 
+
+#Attaching the data frame
+attach(Conc) #this is for not writing the name of the data frame and the $ ever time
+
+#Sort Conc according to gasto_mon, folioviv, foliohog
+Conc<- orderBy (~+gasto_mon+folioviv+foliohog, data=Conc) #this give us the households sorted by total income
+
+#Adding the values of the expansion factor. The sum is 34 million, which is the number of households in the country.
+tot_hogares<-sum(Conc$factor,to.data.frame=TRUE)
+
+#Dividing the number of households into 10 without decimals
+tam_dec<-trunc(tot_hogares/10) #the result is 3.5 million housholds per decile
+
+#Adding a variable to the data frame with this value
+Conc$tam_dec<-tam_dec
+
+############################# Creating Deciles of Income 
+
+Conc$MAXT<-Conc$gasto_mon #vamos a crear en esta base la variable MAXT que es una copia de la columna de ingresos
+
+Conc<-Conc[with(Conc, order(rank(MAXT))),]  #lo que hicimos aqu? fue reordenar la base con respecto a MAXT. Cosa que en realidad, ya estaba.
+
+Conc$ACUMULA<-cumsum(Conc$factor) #aqu? creamos una variable de suma acumulada del factor de viviendas.
+
+
+
+############################Ahora viene la creaci?n de los deciles
+
+#no se que es esto de a1 y b1. Pero s? e simportante. Los resultados cmabian por poquito si no lo haces 
+for(i in 1:9)
+{
+  a1<-Conc[dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1,]$factor
+  Conc<-rbind(Conc[1:(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1),],
+              Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1):dim(Conc[1])[1],])
+  b1<-tam_dec*i-Conc[dim(Conc[Conc$ACUMULA<tam_dec*i,])[1],]$ACUMULA
+  Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+1),]$factor<-b1
+  Conc[(dim(Conc[Conc$ACUMULA<tam_dec*i,])[1]+2),]$factor<-(a1-b1)
+}
+
+#aqu? estamos creando otra variable de suma acumulada del n?mero de hogares
+Conc$ACUMULA2<-cumsum(Conc$factor)
+
+#aqu? estamos creando una variable que se llama decil que solo tiene ceros
+Conc$DECIL<-0
+
+#recordemos que el tama?o de cada decil es de 3,474,481. 
+#loq ue hicimos aqu? es pedirle que ponga un uno a los primeros hogares menores al tama?o de decil. 
+#es decir, que el primer decil tiene ya UNOS
+Conc[(Conc$ACUMULA2<=tam_dec),]$DECIL<-1
+
+#para una sucesi?n del 1 al 9, cuando la variable acumulado2 sea mayor que el tama?o de decil multiplicado por
+#1, 2, 3... pone en la variable decil el n?mero i+1
+for(i in 1:9)
+{
+  Conc[((Conc$ACUMULA2>tam_dec*i)&(Conc$ACUMULA2<=tam_dec*(i+1))),]$DECIL<-(i+1)
+}
+
+# a lo que le qued? cero (que es la ?ltima observaci?n), ponle el decil 10
+Conc[Conc$DECIL%in%"0",]$DECIL<-10
+
+# TOTAL HOGARES
+x<-tapply(Conc$factor,Conc$Nhog,sum)
+# DECILES
+y<-tapply(Conc$factor,Conc$DECIL,sum)
+# se calcula el promedio (ingreso entre los hogares) tanto para el total como para cada uno de los deciles
+gasto_monmed_t<-tapply(Conc$factor*Conc$gasto_mon,Conc$Nhog,sum)/x
+gasto_monmed_d<-tapply(Conc$factor*Conc$gasto_mon,Conc$DECIL,sum)/y
+########################## C U A D R O S 
+# guardamos los resultados en un data frame
+prom_rub <- data.frame (c(gasto_monmed_t,gasto_monmed_d))
+# agregamos el nombre a las filas
+Numdec<-c("Mean", "I", "II", "III","IV", "V", "VI", "VII", "VIII", "IX","X")
+row.names(prom_rub)<-Numdec
+
+# GINI Nacional (sobre los 10 deciles) por hogar usando el promedio del ingreso corriente (gasto_mon)
+deciles_hog_gasto_mon <- data.frame(hogaresxdecil=c(x,x,x,x,x,x,x,x,x,x),
+                                    ingreso=c(gasto_monmed_d[1],gasto_monmed_d[2],gasto_monmed_d[3],
+                                              gasto_monmed_d[4],gasto_monmed_d[5],gasto_monmed_d[6],
+                                              gasto_monmed_d[7],gasto_monmed_d[8],gasto_monmed_d[9],
+                                              gasto_monmed_d[10]))
+# se efectua la función Gini y se guarda en nuestro vector a.
+a<-gini(deciles_hog_gasto_mon$ingreso,weights=deciles_hog_gasto_mon$hogares)
+# se renombran las variables (columnas)
+names(prom_rub)=c("GASTO CORRIENTE")
+names(a)="GINI"
+##### Mostramos el resultado en pantalla 
+round(prom_rub)
+round(a,5)
+
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+
+write.dbf(Conc,file="Conc2016_consumo.dbf")
+
+rm(list=ls())
+
+################## Creadicón de las tablas de ingreso por fuente 
+library(foreign)
+library(survey)
+library(doBy)
+library(reldist)
+library(tidyverse)
+options(survey.lonely.psu="adjust")
+
+#reading the data
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+Conc2016<-read.dbf("Conc2016_consumo.dbf",as.is = T)
+
+
+
+mydesign <- svydesign(id=~upm,strata=~est_dis,data=Conc2016,weights=~factor)
+
+#vamos por el ingreso corriente total del pa?s
+# ing_ cor se define como La suma de las variables ingtrab, salud, transf_gasr, estim_alqu y otros_ing.
+#te sale que el ingreso trimestra promedio en Mexico es de 49,610.
+#notes? que esto no es otra cosa que el gasto_mon*factor/34744819
+gasto_monTot <- svyratio(~gasto_mon,denominator=~Nhog,mydesign) 
+
+#ahora, vamos a hacer lo mismo por decil
+#aqu? cmabia la funci?n a svyby, en by va el decil que creamos.
+#y al final va la funci?n que queremos
+gasto_monDECIL <- svyby(~gasto_mon,denominator=~Nhog,by=~DECIL,mydesign,svyratio)
+
+
+#     alimentos
+
+alimentosTot <- svyratio(~alimentos,denominator=~Nhog,mydesign) # Total promedio
+alimentosDECIL <- svyby(~alimentos,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### vestido
+vestidoTot <- svyratio(~vesti_calz,denominator=~Nhog,mydesign) # Total promedio
+vestidoDECIL <- svyby(~vesti_calz,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### vivienda
+viviendaTot <- svyratio(~vivienda,denominator=~Nhog,mydesign) # Total promedio
+viviendaDECIL <- svyby(~vivienda,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### limpieza
+limpiezaTot <- svyratio(~limpieza,denominator=~Nhog,mydesign) # Total promedio
+limpiezaDECIL<- svyby(~limpieza,denominator=~Nhog,by=~DECIL,mydesign,svyratio) # por decil
+
+
+###### salud
+saludTot <- svyratio(~salud,denominator=~Nhog,mydesign) # Total promedio
+saludDECIL <- svyby(~salud,denominator=~Nhog,by=~DECIL ,mydesign,svyratio)#Por decil
+
+
+###### transporte
+transporteTot <- svyratio(~transporte,denominator=~Nhog,mydesign) # Total promedio
+transporteDECIL <- svyby(~transporte,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # por decil
+
+
+###### educa_espa
+educa_espaTot <- svyratio(~educa_espa,denominator=~Nhog,mydesign) # Total promedio
+educa_espaDECIL <- svyby(~educa_espa,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # Por decil
+
+
+######## personales
+
+personalesTot <- svyratio(~personales,denominator=~Nhog,mydesign) # Total promedio
+personalesDECIL <- svyby(~personales,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # DECIL
+
+###### transf_gas 
+transf_gasTot <- svyratio(~transf_gas,denominator=~Nhog,mydesign) # Total promedio
+transf_gasDECIL <- svyby(~transf_gas,denominator=~Nhog,by=~DECIL ,mydesign,svyratio) # decil
+
+
+######################################### Estimaciones 
+
+ES_gasto_monTot <- gasto_monTot[[1]] #lo que estoy haciendo aqu? es extraer el valor de la primera columa que corresponde al c?lculo.
+ES_gasto_monDECIL <- gasto_monDECIL[[2]] #En el caso de las entidades, los c?lculos quedaron en la segunda columna
+
+ES_alimentosTot <- alimentosTot[[1]]
+ES_alimentosDECIL <- alimentosDECIL[[2]]
+
+ES_vestidoTot <- vestidoTot[[1]]
+ES_vestidoDECIL <- vestidoDECIL[[2]]
+
+ES_viviendaTot <- viviendaTot[[1]]
+ES_viviendaDECIL <- viviendaDECIL[[2]]
+
+ES_limpiezaTot <- limpiezaTot [[1]]
+ES_limpiezaDECIL <- limpiezaDECIL [[2]]
+
+ES_saludTot <- saludTot [[1]]
+ES_saludDECIL <- saludDECIL [[2]]
+
+ES_transporteTot <- transporteTot [[1]]
+ES_transporteDECIL <- transporteDECIL [[2]]
+
+ES_educa_espaTot <- educa_espaTot [[1]]
+ES_educa_espaDECIL <- educa_espaDECIL [[2]]
+
+ES_personalesTot <- personalesTot[[1]]
+ES_personalesDECIL <- personalesDECIL[[2]]
+
+ES_transf_gasTot <- transf_gasTot [[1]]
+ES_transf_gasDECIL <- transf_gasDECIL [[2]]
+
+
+########## Error Est?ndar 
+SE_gasto_monTot <- SE (gasto_monTot)
+SE_gasto_monDECIL <- SE (gasto_monDECIL)
+
+SE_alimentosTot <- SE (alimentosTot)
+SE_alimentosDECIL <- SE (alimentosDECIL)
+
+SE_vestidoTot <- SE (vestidoTot)
+SE_vestidoDECIL <- SE (vestidoDECIL)
+
+SE_viviendaTot <- SE (viviendaTot)
+SE_viviendaDECIL <- SE (viviendaDECIL)
+
+SE_limpiezaTot <- SE (limpiezaTot)
+SE_limpiezaDECIL <- SE (limpiezaDECIL)
+
+SE_saludTot <- SE (saludTot)
+SE_saludDECIL <- SE (saludDECIL)
+
+SE_transporteTot <- SE (transporteTot)
+SE_transporteDECIL <- SE (transporteDECIL)
+
+SE_educa_espaTot <- SE (educa_espaTot)
+SE_educa_espaDECIL <- SE (educa_espaDECIL)
+
+SE_personalesTot <- SE (personalesTot)
+SE_personalesDECIL <- SE (personalesDECIL)
+
+SE_transf_gasTot <- SE (transf_gasTot)
+SE_transf_gasDECIL <- SE (transf_gasDECIL)
+
+
+########## Coeficiente de variaci?n 
+CV_gasto_monTot <- cv(gasto_monTot)
+CV_gasto_monDECIL <- cv(gasto_monDECIL)
+
+CV_alimentosTot <- cv(alimentosTot)
+CV_alimentosDECIL <- cv(alimentosDECIL)
+
+CV_vestidoTot <- cv(vestidoTot)
+CV_vestidoDECIL <- cv(vestidoDECIL)
+
+CV_viviendaTot <- cv(viviendaTot)
+CV_viviendaDECIL <- cv(viviendaDECIL)
+
+CV_limpiezaTot <- cv(limpiezaTot)
+CV_limpiezaDECIL <- cv(limpiezaDECIL)
+
+CV_saludTot <- cv(saludTot)
+CV_saludDECIL <- cv(saludDECIL)
+
+CV_transporteTot <- cv(transporteTot)
+CV_transporteDECIL <- cv(transporteDECIL)
+
+CV_educa_espaTot <- cv(educa_espaTot)
+CV_educa_espaDECIL <- cv(educa_espaDECIL)
+
+CV_personalesTot <- cv(personalesTot)
+CV_personalesDECIL <- cv(personalesDECIL)
+
+CV_transf_gasTot <- cv(transf_gasTot)
+CV_transf_gasDECIL <- cv(transf_gasDECIL)
+
+
+########## Limite inferior 
+LI_gasto_monTot <- confint(gasto_monTot,level=0.90)[,1]
+LI_gasto_monDECIL <- confint(gasto_monDECIL,level=0.90)[,1]
+
+LI_alimentosTot <- confint(alimentosTot,level=0.90)[,1]
+LI_alimentosDECIL <- confint(alimentosDECIL,level=0.90)[,1]
+
+LI_vestidoTot <- confint(vestidoTot,level=0.90)[,1]
+LI_vestidoDECIL <- confint(vestidoDECIL,level=0.90)[,1]
+
+LI_viviendaTot <- confint(viviendaTot,level=0.90)[,1]
+LI_viviendaDECIL <- confint(viviendaDECIL,level=0.90)[,1]
+
+LI_limpiezaTot <- confint(limpiezaTot,level=0.90)[,1]
+LI_limpiezaDECIL <- confint(limpiezaDECIL,level=0.90)[,1]
+
+LI_saludTot <- confint(saludTot,level=0.90)[,1]
+LI_saludDECIL <- confint(saludDECIL,level=0.90)[,1]
+
+LI_transporteTot <- confint(transporteTot,level=0.90)[,1]
+LI_transporteDECIL <- confint(transporteDECIL,level=0.90)[,1]
+
+LI_educa_espaTot <- confint(educa_espaTot,level=0.90)[,1]
+LI_educa_espaDECIL <- confint(educa_espaDECIL,level=0.90)[,1]
+
+LI_personalesTot <- confint(personalesTot,level=0.90)[,1]
+LI_personalesDECIL <- confint(personalesDECIL,level=0.90)[,1]
+
+LI_transf_gasTot <- confint(transf_gasTot,level=0.90)[,1]
+LI_transf_gasDECIL <- confint(transf_gasDECIL,level=0.90)[,1]
+
+
+
+########## Limite superior 
+LS_gasto_monTot <- confint(gasto_monTot,level=0.90)[,2]
+LS_gasto_monDECIL <- confint(gasto_monDECIL,level=0.90)[,2]
+
+LS_alimentosTot <- confint(alimentosTot,level=0.90)[,2]
+LS_alimentosDECIL <- confint(alimentosDECIL,level=0.90)[,2]
+
+LS_vestidoTot <- confint(vestidoTot,level=0.90)[,2]
+LS_vestidoDECIL <- confint(vestidoDECIL,level=0.90)[,2]
+
+LS_viviendaTot <- confint(viviendaTot,level=0.90)[,2]
+LS_viviendaDECIL <- confint(viviendaDECIL,level=0.90)[,2]
+
+LS_limpiezaTot <- confint(limpiezaTot,level=0.90)[,2]
+LS_limpiezaDECIL <- confint(limpiezaDECIL,level=0.90)[,2]
+
+LS_saludTot <- confint(saludTot,level=0.90)[,2]
+LS_saludDECIL <- confint(saludDECIL,level=0.90)[,2]
+
+LS_transporteTot <- confint(transporteTot,level=0.90)[,2]
+LS_transporteDECIL <- confint(transporteDECIL,level=0.90)[,2]
+
+LS_educa_espaTot <- confint(educa_espaTot,level=0.90)[,2]
+LS_educa_espaDECIL <- confint(educa_espaDECIL,level=0.90)[,2]
+
+LS_personalesTot <- confint(personalesTot,level=0.90)[,2]
+LS_personalesDECIL <- confint(personalesDECIL,level=0.90)[,2]
+
+LS_transf_gasTot <- confint(transf_gasTot,level=0.90)[,2]
+LS_transf_gasDECIL <- confint(transf_gasDECIL,level=0.90)[,2]
+
+
+#############################      Cuadros   
+#este cuadro, lo ?nico que tiene son todas la estimaciones.
+#son 10 filas y 18 columnas.
+c_DECIL_ES <-
+  data.frame(c(ES_gasto_monTot,ES_gasto_monDECIL),
+             c(ES_alimentosTot,ES_alimentosDECIL),
+             c(ES_vestidoTot,ES_vestidoDECIL),
+             c(ES_viviendaTot,ES_viviendaDECIL),
+             c(ES_limpiezaTot,ES_limpiezaDECIL),
+             c(ES_saludTot,ES_saludDECIL),
+             c(ES_transporteTot,ES_transporteDECIL),
+             c(ES_educa_espaTot,ES_educa_espaDECIL),
+             c(ES_personalesTot,ES_personalesDECIL),
+             c(ES_transf_gasTot,ES_transf_gasDECIL))
+##### ERROR ESTANDAR
+c_DECIL_SE <-
+  data.frame(c(SE_gasto_monTot,SE_gasto_monDECIL),
+             c(SE_alimentosTot,SE_alimentosDECIL),
+             c(SE_vestidoTot,SE_vestidoDECIL),
+             c(SE_viviendaTot,SE_viviendaDECIL),
+             c(SE_limpiezaTot,SE_limpiezaDECIL),
+             c(SE_saludTot,SE_saludDECIL),
+             c(SE_transporteTot,SE_transporteDECIL),
+             c(SE_educa_espaTot,SE_educa_espaDECIL),
+             c(SE_personalesTot,SE_personalesDECIL),
+             c(SE_transf_gasTot,SE_transf_gasDECIL))
+
+##### COEFICIENTE DE VARIACION
+c_DECIL_CV <-
+  data.frame(c(CV_gasto_monTot,CV_gasto_monDECIL),c(CV_alimentosTot,CV_alimentosDECIL),c(CV_vestidoTot,CV_vestidoDECIL),c(CV_viviendaTot,CV_viviendaDECIL)
+             ,c(CV_limpiezaTot,CV_limpiezaDECIL),c(CV_saludTot,CV_saludDECIL),c(CV_transporteTot,CV_transporteDECIL),
+             c(CV_educa_espaTot,CV_educa_espaDECIL),c(CV_personalesTot,CV_personalesDECIL),c(CV_transf_gasTot,CV_transf_gasDECIL))
+
+##### LIMITE INFERIOR AL 90%
+c_DECIL_LI <-
+  data.frame(c(LI_gasto_monTot,LI_gasto_monDECIL),c(LI_alimentosTot,LI_alimentosDECIL),c(LI_vestidoTot,LI_vestidoDECIL),
+             c(LI_viviendaTot,LI_viviendaDECIL),c(LI_limpiezaTot,LI_limpiezaDECIL),c(LI_saludTot,LI_saludDECIL),c(LI_transporteTot,LI_transporteDECIL),c(LI_educa_espaTot,LI_educa_espaDECIL)
+             ,c(LI_personalesTot,LI_personalesDECIL),c(LI_transf_gasTot,LI_transf_gasDECIL))
+
+### LIMITE SUPERIOR AL 90%
+c_DECIL_LS <-
+  data.frame(c(LS_gasto_monTot,LS_gasto_monDECIL),c(LS_alimentosTot,LS_alimentosDECIL),c(LS_vestidoTot,LS_vestidoDECIL),c(LS_viviendaTot,LS_viviendaDECIL)
+             ,c(LS_limpiezaTot,LS_limpiezaDECIL),c(LS_saludTot,LS_saludDECIL),c(LS_transporteTot,LS_transporteDECIL),
+             c(LS_educa_espaTot,LS_educa_espaDECIL),c(LS_personalesTot,LS_personalesDECIL),c(LS_transf_gasTot,LS_transf_gasDECIL))
+
+# se agregan los nombres de las entidades a las filas
+#esta cadena est? bien loca, no?
+DECILES<-c("MEAN", "I", "II", "III","IV", "V", "VI", "VII", "VIII", "IX","X")
+row.names(c_DECIL_ES)<-row.names(c_DECIL_SE)<-row.names(c_DECIL_CV)<-row.names(c_DECIL_LI)<-row.names(c_DECIL_LS)<-DECILES
+
+#ahora vamos a ponerle nombre a las columnas
+names(c_DECIL_ES)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "personales spending","transf_gasrences")
+
+names(c_DECIL_SE)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "personales spending","transf_gasrences")
+
+names(c_DECIL_CV)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "personales spending","transf_gasrences")
+
+names(c_DECIL_LI)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "personales spending","transf_gasrences")
+
+names(c_DECIL_LS)=c("gasto", "Food", "Clothes", "Housing","Cleaning", "Health care","Transportation", "Education", "personales spending","transf_gasrences")
+
+#ahora, lo que podemos hacer es mostrar los cuadros en la consola redondeados
+# el comando round, redondea las cifra para mostrar, en el caso del coeficiente de variaci?n redondea a 4 decimales y luego multiplica por cien.
+# Mostramos el resultado en pantalla
+round(c_DECIL_ES)
+round(c_DECIL_SE)
+round(c_DECIL_CV,4)*100
+round(c_DECIL_LI)
+round(c_DECIL_LS)
+
+prueba<-c_DECIL_ES%>%
+  mutate(prueba=Food+Clothes+Housing+
+           Cleaning+`Health care`+Transportation+
+           Education+`personales spending`+transf_gasrences)
+
+
+all.equal(c_DECIL_ES$gasto,prueba$prueba)
+
+
+
+write.dbf(c_DECIL_ES,file = "CONSUMO Nacional por fuente por DECIL estimaciones 2016.dbf")
+write.dbf(c_DECIL_SE,file = "CONSUMO Nacional por fuente por DECIL errores standard 2016.dbf")
+write.dbf(c_DECIL_CV,file = "CONSUMO Nacional por fuente por DECIL CV 2016.dbf")
+write.dbf(c_DECIL_LI,file = "CONSUMO Nacional por fuente por DECIL LI 2016.dbf")
+write.dbf(c_DECIL_ES,file = "CONSUMO Nacional por fuente por DECIL LS 2016.dbf")
+
+rm(list = ls())
+
+########### Grafica
+library(foreign)
+library(tidyverse)
+library(plotly)
+library(htmlwidgets)
+library(reshape2)
+
+
+setwd("C:/Users/Erick/OneDrive/GIC/Consumo_por_fuente")
+Consumo_por_decil_2016<-read.dbf("CONSUMO Nacional por fuente por DECIL estimaciones 2016.dbf",as.is = T)
+
+base_grafica<-Consumo_por_decil_2016%>%
+  mutate(Food=(Food/gasto)*100,
+         Clothes=(Clothes/gasto)*100,
+         Housing=(Housing/gasto)*100,
+         Health.car=(Health.car/gasto)*100,
+         Transporta=(Transporta/gasto)*100,
+         Education=(Education/gasto)*100,
+         Others=((personales+transf_gas+Cleaning)/gasto)*100)
+
+
+base_grafica$gasto<-NULL
+
+base_grafica$personales<-NULL
+
+base_grafica$transf_gas<-NULL
+
+base_grafica$Cleaning<-NULL
+
+prueba<-base_grafica%>%
+  mutate(Food+Clothes+Housing+Health.car+Transporta+Education+Others)
+
+prueba$`+...`
+
+col_order<-c("Others","Education","Transporta","Health.car","Housing","Food")
+
+base_grafica<-base_grafica[,col_order]
+
+base_grafica<-base_grafica%>%
+  rename(Others=Others,
+         Education=Education,
+         Transport=Transporta,
+         "Health care"=Health.car,
+         Housing=Housing,
+         Food=Food)
+
+
+base_grafica<-base_grafica%>%
+  mutate(Deciles=c("Mean","I","II","III","IV","V","VI","VII","VIII","IX","X"))
+
+base_grafica<-base_grafica%>%
+  mutate(Deciles=fct_relevel(Deciles,"Mean","I","II","III","IV","V","VI","VII","VIII","IX","X"))
+
+base_grafica<-melt(base_grafica)
+
+grafica_2016<-ggplot(base_grafica, aes(fill=variable, y=value, x=Deciles)) + 
+  geom_bar(position="stack", stat="identity")+
+  labs(title = "Figure 1
+Mexico 2016
+Household expenditure on consumption categories by deciles",
+       y="Share of expenditure",
+       x="Decile",
+       fill="")+
+  scale_y_continuous(breaks = seq(0,100,10))+
+  theme_minimal()
+
+grafica_2016
+
+rm(list = ls())
